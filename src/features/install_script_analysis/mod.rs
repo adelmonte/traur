@@ -250,6 +250,26 @@ mod tests {
         assert!(has(&ids, "P-INSTALL-TMP-EXEC"));
     }
 
+    // --- Build-time package-manager installs ---
+
+    #[test]
+    fn install_npm_install() {
+        let ids = analyze("npm install atomic-lockfile");
+        assert!(has(&ids, "P-INSTALL-PKG-MANAGER-JS"));
+    }
+
+    #[test]
+    fn install_pip_install() {
+        let ids = analyze("pip3 install evilpkg");
+        assert!(has(&ids, "P-INSTALL-PKG-MANAGER"));
+    }
+
+    #[test]
+    fn install_bare_npm_no_signal() {
+        let ids = analyze("npm install");
+        assert!(!has(&ids, "P-INSTALL-PKG-MANAGER-JS"), "bare npm install should not fire, got: {ids:?}");
+    }
+
     #[test]
     fn benign_install_no_signals() {
         let ids = analyze(r#"

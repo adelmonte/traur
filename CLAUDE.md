@@ -29,7 +29,7 @@ trust = 100 - risk
 
 Tiers: TRUSTED (81-100), OK (61-80), SKETCHY (41-60), SUSPICIOUS (21-40), MALICIOUS (0-20).
 
-Override gates: 47 signals across download-and-execute, reverse shells, GTFOBins binary abuse, and variable-concatenated exec escalate directly to MALICIOUS.
+Override gates: 48 signals across download-and-execute, reverse shells, GTFOBins binary abuse, variable-concatenated exec, and adopted-package build-time network installs escalate directly to MALICIOUS.
 
 ## Build
 
@@ -83,7 +83,7 @@ Use `/release <version>` in Claude Code to run the full release workflow (bump v
 | `src/shared/aur_comments.rs` | AUR package page comment scraper |
 | `src/shared/signal_registry.rs` | Central registry of all signal definitions (pattern + hardcoded) |
 | `src/shared/config.rs` | User config: whitelist, ignored signals/categories |
-| `data/patterns.toml` | Regex pattern database (239 patterns). Total signals: 279 (pattern + hardcoded) |
+| `data/patterns.toml` | Regex pattern database (243 patterns). Total signals: 284 (pattern + hardcoded) |
 | `src/bench.rs` | Batch benchmark (parallel scan, retry, stats) |
 | `hook/traur.hook` | ALPM hook definition |
 | `hook/traur-hook.rs` | Hook binary (filters AUR pkgs, runs scans) |

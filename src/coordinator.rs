@@ -179,10 +179,103 @@ pub fn run_analysis_with_config(
         all_signals.extend(signals);
     }
 
+    apply_composite_gates(&mut all_signals);
+
     if !config.ignored.signals.is_empty() || !config.ignored.categories.is_empty() {
         all_signals
             .retain(|s| !crate::shared::config::is_signal_ignored(config, &s.id, &s.category));
     }
 
     scoring::compute_score(&ctx.name, &all_signals)
+}
+
+/// Signals indicating a build/install step fetches a named package over the network.
+const NET_INSTALL_SIGNALS: [&str; 4] = [
+    "P-NET-PKG-INSTALL-JS",
+    "P-NET-PKG-INSTALL",
+    "P-INSTALL-PKG-MANAGER-JS",
+    "P-INSTALL-PKG-MANAGER",
+];
+
+/// Apply composite gates that depend on signals emitted by multiple features.
+///
+/// A package that was adopted/taken over (`B-SUBMITTER-CHANGED`) AND fetches a
+/// named package over the network at build time is the Atomic Arch supply-chain
+/// takeover signature — escalate it directly to MALICIOUS.
+fn apply_composite_gates(signals: &mut Vec<scoring::Signal>) {
+    use crate::shared::scoring::{Signal, SignalCategory};
+
+    let taken_over = signals.iter().any(|s| s.id == "B-SUBMITTER-CHANGED");
+    let net_install = signals
+        .iter()
+        .find(|s| NET_INSTALL_SIGNALS.contains(&s.id.as_str()));
+
+    if let (true, Some(install)) = (taken_over, net_install) {
+        let matched_line = install.matched_line.clone();
+        signals.push(Signal {
+            id: "B-ORPHAN-NET-INSTALL".to_string(),
+            category: SignalCategory::Behavioral,
+            points: 90,
+            description:
+                "Adopted/taken-over package fetches a named package over the network at build time — supply-chain takeover pattern"
+                    .to_string(),
+            is_override_gate: true,
+            matched_line,
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::shared::config::Config;
+    use crate::shared::models::AurPackage;
+
+    fn make_pkg(maintainer: &str, submitter: &str) -> AurPackage {
+        AurPackage {
+            name: "test-pkg".into(),
+            package_base: None,
+            url: None,
+            num_votes: 10,
+            popularity: 1.0,
+            out_of_date: None,
+            maintainer: Some(maintainer.into()),
+            submitter: Some(submitter.into()),
+            first_submitted: 1_600_000_000,
+            last_modified: 1_700_000_000,
+            license: None,
+        }
+    }
+
+    fn ctx_with(maintainer: &str, submitter: &str, pkgbuild: &str) -> PackageContext {
+        PackageContext {
+            name: "test-pkg".into(),
+            metadata: Some(make_pkg(maintainer, submitter)),
+            pkgbuild_content: Some(pkgbuild.into()),
+            install_script_content: None,
+            prior_pkgbuild_content: None,
+            git_log: vec![],
+            maintainer_packages: vec![],
+            github_stars: None,
+            github_not_found: false,
+            aur_comments: vec![],
+        }
+    }
+
+    #[test]
+    fn takeover_plus_net_install_gates_malicious() {
+        let ctx = ctx_with("attacker", "original", "build() {\n  npm install evilpkg\n}\n");
+        let result = run_analysis_with_config(&ctx, &Config::default());
+        assert_eq!(result.tier, Tier::Malicious);
+        assert_eq!(result.override_gate_fired.as_deref(), Some("B-ORPHAN-NET-INSTALL"));
+    }
+
+    #[test]
+    fn net_install_without_takeover_does_not_gate() {
+        let ctx = ctx_with("alice", "alice", "build() {\n  npm install evilpkg\n}\n");
+        let result = run_analysis_with_config(&ctx, &Config::default());
+        assert!(result.override_gate_fired.is_none());
+        assert_ne!(result.tier, Tier::Malicious);
+        assert!(result.signals.iter().any(|s| s.id == "P-NET-PKG-INSTALL-JS"));
+    }
 }

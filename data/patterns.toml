@@ -610,6 +610,20 @@ points = 65
 description = "Alias override of common system commands"
 override_gate = false
 
+[[pkgbuild_analysis]]
+id = "P-NET-PKG-INSTALL-JS"
+pattern = '\b(npm|pnpm|yarn|bun)\s+(i|install|add)\s+(?:--?\S+\s+)*[@./\w]'
+points = 35
+description = "Build step installs a named JS package over the network (npm/yarn/pnpm/bun)"
+override_gate = false
+
+[[pkgbuild_analysis]]
+id = "P-NET-PKG-INSTALL"
+pattern = '\b(pip[23]?\s+install|gem\s+install|cargo\s+install|go\s+install)\s+\S'
+points = 25
+description = "Build step installs a package over the network (pip/gem/cargo/go)"
+override_gate = false
+
 # Install script patterns
 [[install_script_analysis]]
 id = "P-INSTALL-CURL"
@@ -798,6 +812,20 @@ id = "P-INSTALL-XDG-AUTOSTART"
 pattern = '\.config/autostart'
 points = 60
 description = "XDG autostart creation from install script"
+override_gate = false
+
+[[install_script_analysis]]
+id = "P-INSTALL-PKG-MANAGER-JS"
+pattern = '\b(npm|pnpm|yarn|bun)\s+(i|install|add)\s+(?:--?\S+\s+)*[@./\w]'
+points = 35
+description = "Install script installs a named JS package over the network (npm/yarn/pnpm/bun)"
+override_gate = false
+
+[[install_script_analysis]]
+id = "P-INSTALL-PKG-MANAGER"
+pattern = '\b(pip[23]?\s+install|gem\s+install|cargo\s+install|go\s+install)\s+\S'
+points = 25
+description = "Install script installs a package over the network (pip/gem/cargo/go)"
 override_gate = false
 
 # Source URL patterns

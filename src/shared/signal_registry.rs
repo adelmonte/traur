@@ -68,6 +68,7 @@ fn hardcoded_signals() -> Vec<SignalDef> {
         // orphan_takeover_analysis
         ("B-SUBMITTER-CHANGED", Behavioral, 15, "Package maintainer differs from original submitter", false),
         ("B-ORPHAN-TAKEOVER", Behavioral, 50, "Adopted package with new git author (orphan takeover pattern)", false),
+        ("B-ORPHAN-NET-INSTALL", Behavioral, 90, "Adopted/taken-over package fetches a named package over the network at build time", true),
         // bin_source_verification
         ("B-BIN-GITHUB-ORG-MISMATCH", Behavioral, 50, "-bin package source downloads from different GitHub org than upstream", false),
         ("B-BIN-DOMAIN-MISMATCH", Behavioral, 30, "-bin package source downloads from different domain than upstream", false),
