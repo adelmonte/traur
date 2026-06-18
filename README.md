@@ -46,9 +46,20 @@ sudo traur wrapper --disable     # remove it
 ```
 
 The wrapper scans the local PKGBUILD/`.install` **offline** (it reads the files
-the helper already downloaded), prints the findings, then asks before building
-(`[Y/n]`, default yes; auto-proceeds when run non-interactively). Because it
-never touches the network during a build, it cannot stall an install.
+the helper already downloaded), prints the findings, then asks before building.
+Because it never touches the network during a build, it cannot stall an install.
+
+At the prompt:
+
+| Key | Action |
+|-----|--------|
+| `Y` / Enter | proceed with the build (default) |
+| `n` | abort the build |
+| `d` | show the git diff for this update (what changed), then ask again |
+| `p` | show the PKGBUILD/`.install` with the flagged lines highlighted, then ask again |
+
+When run non-interactively (e.g. a `--noconfirm` update) it prints the findings
+and proceeds automatically.
 
 ## How it works
 

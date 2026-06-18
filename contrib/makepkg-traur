@@ -32,6 +32,7 @@ if [[ $do_scan -eq 1 && -f PKGBUILD ]] && command -v traur >/dev/null 2>&1; then
     #   d = git diff for this update (what changed)
     #   p = the PKGBUILD/.install with the flagged lines highlighted (why it fired)
     if { : >/dev/tty; } 2>/dev/null; then
+        printf '\033[2m    d = view the diff for this update   p = show the flagged PKGBUILD/.install\033[0m\n' >/dev/tty
         while true; do
             printf '\033[1;32m==>\033[0m traur: proceed with build? [Y/n/d/p] ' >/dev/tty
             read -r reply </dev/tty
