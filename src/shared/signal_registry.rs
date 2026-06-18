@@ -77,6 +77,8 @@ fn hardcoded_signals() -> Vec<SignalDef> {
         ("T-NEW-PACKAGE", Temporal, 25, "Package is very new (< 7 days old)", false),
         ("T-MALICIOUS-DIFF", Temporal, 55, "Latest commit introduces network code not present in prior history", false),
         ("T-AUTHOR-CHANGE", Temporal, 25, "Git history shows multiple different authors", false),
+        // malicious_list (online-only known-compromised check)
+        ("B-KNOWN-MALICIOUS", Behavioral, 100, "Package appears on Arch's known-compromised package list", true),
         // aur_comments_analysis
         ("M-COMMENTS-SECURITY", Metadata, 40, "Recent AUR comments contain security-related warnings", false),
         // github_stars

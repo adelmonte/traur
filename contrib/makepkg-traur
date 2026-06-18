@@ -1,0 +1,67 @@
+#!/bin/bash
+# traur makepkg wrapper — scan the local PKGBUILD with traur before makepkg
+# builds it. Installed to /usr/share/traur/makepkg; activate by symlinking it
+# into /usr/local/bin/makepkg (so it shadows /usr/bin/makepkg in PATH) with:
+#
+#     traur wrapper --enable
+#
+# The scan is fully offline (traur reads the PKGBUILD and .install already on
+# disk), so it can never block a build on the network.
+
+real_makepkg=/usr/bin/makepkg
+
+# yay/paru invoke makepkg several times per install (verifysource, printsrcinfo,
+# nobuild, build, ...). The --verifysource pass runs exactly once and before the
+# build, so we scan only on it: one scan per install, before any compilation,
+# and a fresh scan every time you re-run (no stale dedup lock). Every other pass
+# falls straight through untouched.
+do_scan=0
+for arg in "$@"; do
+    if [[ "$arg" == "--verifysource" ]]; then
+        do_scan=1
+        break
+    fi
+done
+
+if [[ $do_scan -eq 1 && -f PKGBUILD ]] && command -v traur >/dev/null 2>&1; then
+    # Offline local scan. Findings go to stderr; stdout stays clean.
+    timeout 15 traur scan --pkgbuild ./PKGBUILD >&2
+
+    # Prompt only with a controlling terminal; otherwise auto-proceed so
+    # unattended (--noconfirm) updates never stall.
+    #   d = git diff for this update (what changed)
+    #   p = the PKGBUILD/.install with the flagged lines highlighted (why it fired)
+    if { : >/dev/tty; } 2>/dev/null; then
+        while true; do
+            printf '\033[1;32m==>\033[0m traur: proceed with build? [Y/n/d/p] ' >/dev/tty
+            read -r reply </dev/tty
+            case "$reply" in
+                [Nn]*)
+                    printf '\033[1;32m==>\033[0m traur: aborted\n' >&2
+                    exit 1
+                    ;;
+                [Dd]*)
+                    {
+                        if git rev-parse --is-inside-work-tree >/dev/null 2>&1 \
+                           && git rev-parse HEAD~1 >/dev/null 2>&1; then
+                            git --no-pager -c color.ui=always diff HEAD~1 HEAD
+                        else
+                            echo "--- PKGBUILD ---"; cat PKGBUILD
+                            for f in *.install; do
+                                [ -e "$f" ] && { echo "--- $f ---"; cat "$f"; }
+                            done
+                        fi
+                    } >/dev/tty 2>&1
+                    ;;
+                [Pp]*)
+                    CLICOLOR_FORCE=1 traur scan --pkgbuild ./PKGBUILD --source >/dev/tty 2>&1
+                    ;;
+                *)
+                    break
+                    ;;
+            esac
+        done
+    fi
+fi
+
+exec "$real_makepkg" "$@"

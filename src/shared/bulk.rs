@@ -56,8 +56,9 @@ pub fn prefetch_maintainer_packages(
         .collect()
 }
 
-/// Clone repo with retry + exponential backoff. Returns PackageContext or error.
-pub fn clone_with_retry(
+/// Fetch a package's context (PKGBUILD over HTTP + metadata) with retry +
+/// exponential backoff. Returns PackageContext or error.
+pub fn fetch_with_retry(
     name: &str,
     metadata: AurPackage,
     maintainer_packages: Vec<AurPackage>,

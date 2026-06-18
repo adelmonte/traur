@@ -1,12 +1,17 @@
 use crate::features;
 use crate::shared::models::PackageContext;
 use crate::shared::output;
-use crate::shared::scoring::{self, ScanResult, Tier};
+use crate::shared::scoring::{self, ScanResult};
 
-/// Scan a package by name, printing results. Returns the computed tier.
-pub fn scan_package(package_name: &str, json: bool, verbose: bool) -> Result<Tier, String> {
+/// Scan a package by name, printing its findings.
+pub fn scan_package(package_name: &str, json: bool, verbose: bool) -> Result<(), String> {
     let ctx = build_context(package_name)?;
-    let result = run_analysis(&ctx);
+    let mut result = run_analysis(&ctx);
+
+    // Online-only: known-compromised list check (fails open).
+    if let Some(sig) = crate::shared::malicious_list::check(package_name) {
+        result.signals.insert(0, sig);
+    }
 
     if json {
         output::print_json(&result);
@@ -14,111 +19,38 @@ pub fn scan_package(package_name: &str, json: bool, verbose: bool) -> Result<Tie
         output::print_text(&result, verbose);
     }
 
-    Ok(result.tier)
+    Ok(())
 }
 
-/// Build a PackageContext by fetching all data needed for analysis.
+/// Build a PackageContext for a named package by fetching everything over HTTP.
+///
+/// The PKGBUILD and .install are pulled from AUR's cgit (no clone, no cache);
+/// metadata, maintainer packages, GitHub stars and comments come from the AUR
+/// RPC / GitHub APIs. There is no local git history, so the diff/git-history
+/// features no-op for this path.
 pub fn build_context(package_name: &str) -> Result<PackageContext, String> {
-    use crate::shared::{aur_comments, aur_git, aur_rpc, cache, github};
-
-    let metadata = aur_rpc::fetch_package_info(package_name)?;
-
-    // Determine package base (for split packages)
-    let package_base = metadata
-        .package_base
-        .as_deref()
-        .unwrap_or(package_name);
-
-    // Clone/pull the AUR git repo
-    let git_cache = cache::git_cache_dir();
-    let cache_str = git_cache.to_str().unwrap_or("/tmp/traur-git");
-
-    let repo_path = aur_git::ensure_repo(package_base, cache_str)?;
-
-    let pkgbuild_content = aur_git::read_pkgbuild(&repo_path).ok();
-    let install_script_content = pkgbuild_content
-        .as_deref()
-        .and_then(|content| aur_git::read_install_script(&repo_path, content));
-    let mut git_log = aur_git::read_git_log(&repo_path, 20);
-
-    // Attach diff to the latest commit
-    if let Some(first) = git_log.first_mut() {
-        first.diff = aur_git::get_latest_diff(&repo_path);
-    }
-
-    // Read prior PKGBUILD for diff comparison
-    let prior_pkgbuild_content = if git_log.len() >= 2 {
-        aur_git::read_pkgbuild_at_revision(&repo_path, "HEAD~1")
-    } else {
-        None
-    };
-
-    // Fetch maintainer's other packages for reputation analysis
+    let metadata = crate::shared::aur_rpc::fetch_package_info(package_name)?;
     let maintainer_packages = metadata
         .maintainer
         .as_deref()
-        .and_then(|m| aur_rpc::fetch_maintainer_packages(m).ok())
+        .and_then(|m| crate::shared::aur_rpc::fetch_maintainer_packages(m).ok())
         .unwrap_or_default();
-
-    // Fetch GitHub stars if upstream URL points to GitHub
-    let (github_stars, github_not_found) = metadata
-        .url
-        .as_deref()
-        .and_then(|url| github::fetch_github_stars(url))
-        .map(|info| (if info.found { Some(info.stars) } else { None }, !info.found))
-        .unwrap_or((None, false));
-
-    // Fetch recent AUR comments
-    let aur_comments = aur_comments::fetch_recent_comments(package_base);
-
-    Ok(PackageContext {
-        name: package_name.to_string(),
-        metadata: Some(metadata),
-        pkgbuild_content,
-        install_script_content,
-        prior_pkgbuild_content,
-        git_log,
-        maintainer_packages,
-        github_stars,
-        github_not_found,
-        aur_comments,
-    })
+    build_context_prefetched(package_name, metadata, maintainer_packages)
 }
 
-/// Build context using pre-fetched metadata. Only the git clone hits the network.
-/// Returns Err if git clone fails — no PKGBUILD means no meaningful analysis.
+/// Build context from pre-fetched metadata, fetching the PKGBUILD/.install over
+/// HTTP. Returns Err if the PKGBUILD can't be fetched (nothing to analyze).
 pub fn build_context_prefetched(
     package_name: &str,
     metadata: crate::shared::models::AurPackage,
     maintainer_packages: Vec<crate::shared::models::AurPackage>,
 ) -> Result<PackageContext, String> {
-    use crate::shared::{aur_comments, aur_git, cache, github};
+    use crate::shared::{aur_comments, aur_fetch, github};
 
-    let package_base = metadata
-        .package_base
-        .as_deref()
-        .unwrap_or(package_name);
+    let package_base = metadata.package_base.as_deref().unwrap_or(package_name);
 
-    let git_cache = cache::git_cache_dir();
-    let cache_str = git_cache.to_str().unwrap_or("/tmp/traur-git");
-
-    let repo_path = aur_git::ensure_repo(package_base, cache_str)?;
-
-    let pkgbuild = aur_git::read_pkgbuild(&repo_path).ok();
-    let install = pkgbuild
-        .as_deref()
-        .and_then(|content| aur_git::read_install_script(&repo_path, content));
-    let mut log = aur_git::read_git_log(&repo_path, 20);
-
-    if let Some(first) = log.first_mut() {
-        first.diff = aur_git::get_latest_diff(&repo_path);
-    }
-
-    let prior = if log.len() >= 2 {
-        aur_git::read_pkgbuild_at_revision(&repo_path, "HEAD~1")
-    } else {
-        None
-    };
+    let pkgbuild = aur_fetch::fetch_pkgbuild(package_base)?;
+    let install = aur_fetch::fetch_install_script(package_base, &pkgbuild);
 
     let (gh_stars, gh_not_found) = metadata
         .url
@@ -132,10 +64,10 @@ pub fn build_context_prefetched(
     Ok(PackageContext {
         name: package_name.to_string(),
         metadata: Some(metadata),
-        pkgbuild_content: pkgbuild,
+        pkgbuild_content: Some(pkgbuild),
         install_script_content: install,
-        prior_pkgbuild_content: prior,
-        git_log: log,
+        prior_pkgbuild_content: None,
+        git_log: Vec::new(),
         maintainer_packages,
         github_stars: gh_stars,
         github_not_found: gh_not_found,
@@ -143,7 +75,9 @@ pub fn build_context_prefetched(
     })
 }
 
-/// Scan a local PKGBUILD string without network access.
+/// Scan a PKGBUILD provided as an in-memory string (no network, no git).
+/// Used by the library API and integration tests.
+#[allow(dead_code)]
 pub fn scan_pkgbuild(name: &str, pkgbuild_content: &str) -> ScanResult {
     let ctx = PackageContext {
         name: name.to_string(),
@@ -159,6 +93,49 @@ pub fn scan_pkgbuild(name: &str, pkgbuild_content: &str) -> ScanResult {
     };
     run_analysis(&ctx)
 }
+
+/// Scan a local PKGBUILD file offline. When its directory is a git repo (an AUR
+/// helper's build dir), the diff/git-history features run against that local
+/// history. No network access.
+pub fn scan_local(name: &str, pkgbuild_path: &std::path::Path) -> Result<ScanResult, String> {
+    use crate::shared::aur_git;
+
+    let content = std::fs::read_to_string(pkgbuild_path)
+        .map_err(|e| format!("Failed to read {}: {e}", pkgbuild_path.display()))?;
+    let dir = pkgbuild_path.parent().unwrap_or(std::path::Path::new("."));
+
+    let install_script_content = aur_git::read_install_script(dir, &content);
+
+    let (git_log, prior_pkgbuild_content) = if dir.join(".git").exists() {
+        let mut log = aur_git::read_git_log(dir, 20);
+        if let Some(first) = log.first_mut() {
+            first.diff = aur_git::get_latest_diff(dir);
+        }
+        let prior = if log.len() >= 2 {
+            aur_git::read_pkgbuild_at_revision(dir, "HEAD~1")
+        } else {
+            None
+        };
+        (log, prior)
+    } else {
+        (Vec::new(), None)
+    };
+
+    let ctx = PackageContext {
+        name: name.to_string(),
+        metadata: None,
+        pkgbuild_content: Some(content),
+        install_script_content,
+        prior_pkgbuild_content,
+        git_log,
+        maintainer_packages: Vec::new(),
+        github_stars: None,
+        github_not_found: false,
+        aur_comments: vec![],
+    };
+    Ok(run_analysis(&ctx))
+}
+
 
 /// Run all registered features against the context and compute a score.
 pub fn run_analysis(ctx: &PackageContext) -> ScanResult {
@@ -186,7 +163,10 @@ pub fn run_analysis_with_config(
             .retain(|s| !crate::shared::config::is_signal_ignored(config, &s.id, &s.category));
     }
 
-    scoring::compute_score(&ctx.name, &all_signals)
+    ScanResult {
+        package: ctx.name.clone(),
+        signals: all_signals,
+    }
 }
 
 /// Signals indicating a build/install step fetches a named package over the network.
@@ -197,11 +177,11 @@ const NET_INSTALL_SIGNALS: [&str; 4] = [
     "P-INSTALL-PKG-MANAGER",
 ];
 
-/// Apply composite gates that depend on signals emitted by multiple features.
+/// Apply composite findings that depend on signals emitted by multiple features.
 ///
 /// A package that was adopted/taken over (`B-SUBMITTER-CHANGED`) AND fetches a
 /// named package over the network at build time is the Atomic Arch supply-chain
-/// takeover signature — escalate it directly to MALICIOUS.
+/// takeover signature — emit a dedicated composite finding.
 fn apply_composite_gates(signals: &mut Vec<scoring::Signal>) {
     use crate::shared::scoring::{Signal, SignalCategory};
 
@@ -263,19 +243,17 @@ mod tests {
     }
 
     #[test]
-    fn takeover_plus_net_install_gates_malicious() {
+    fn takeover_plus_net_install_emits_composite_finding() {
         let ctx = ctx_with("attacker", "original", "build() {\n  npm install evilpkg\n}\n");
         let result = run_analysis_with_config(&ctx, &Config::default());
-        assert_eq!(result.tier, Tier::Malicious);
-        assert_eq!(result.override_gate_fired.as_deref(), Some("B-ORPHAN-NET-INSTALL"));
+        assert!(result.signals.iter().any(|s| s.id == "B-ORPHAN-NET-INSTALL"));
     }
 
     #[test]
-    fn net_install_without_takeover_does_not_gate() {
+    fn net_install_without_takeover_emits_no_composite() {
         let ctx = ctx_with("alice", "alice", "build() {\n  npm install evilpkg\n}\n");
         let result = run_analysis_with_config(&ctx, &Config::default());
-        assert!(result.override_gate_fired.is_none());
-        assert_ne!(result.tier, Tier::Malicious);
+        assert!(!result.signals.iter().any(|s| s.id == "B-ORPHAN-NET-INSTALL"));
         assert!(result.signals.iter().any(|s| s.id == "P-NET-PKG-INSTALL-JS"));
     }
 }

@@ -33,17 +33,6 @@ pub struct AurPackage {
     pub license: Option<Vec<String>>,
 }
 
-/// Lightweight entry from the AUR metadata dump (packages-meta-v1.json.gz).
-#[derive(Debug, Deserialize)]
-pub struct MetaDumpPackage {
-    #[serde(rename = "Name")]
-    pub name: String,
-    #[serde(rename = "LastModified")]
-    pub last_modified: u64,
-    #[serde(rename = "PackageBase")]
-    pub package_base: String,
-}
-
 /// A single git commit from the AUR package repo.
 #[derive(Debug, Clone)]
 pub struct GitCommit {

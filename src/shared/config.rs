@@ -3,36 +3,9 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Deserialize, Serialize, Default)]
 pub struct Config {
     #[serde(default)]
-    pub thresholds: ThresholdConfig,
-    #[serde(default)]
     pub whitelist: WhitelistConfig,
     #[serde(default)]
     pub ignored: IgnoredConfig,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-pub struct ThresholdConfig {
-    #[serde(default = "default_block_at")]
-    pub block_at: String,
-    #[serde(default = "default_warn_at")]
-    pub warn_at: String,
-}
-
-impl Default for ThresholdConfig {
-    fn default() -> Self {
-        Self {
-            block_at: default_block_at(),
-            warn_at: default_warn_at(),
-        }
-    }
-}
-
-fn default_block_at() -> String {
-    "critical".to_string()
-}
-
-fn default_warn_at() -> String {
-    "medium".to_string()
 }
 
 #[derive(Debug, Deserialize, Serialize, Default)]
