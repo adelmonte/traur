@@ -15,10 +15,24 @@ score, no tiers, no automatic blocking. You decide what the findings mean.
 It can also wrap `makepkg` so that every AUR build (via yay/paru) is scanned
 **offline** before it runs.
 
+![traur scanning a package during an AUR install, showing findings and the proceed prompt](demo.png)
+
 ## Installation
 
+This fork isn't on the AUR — build from source:
+
 ```bash
-paru -S traur
+git clone https://github.com/adelmonte/traur
+cd traur
+cargo build --release
+sudo install -Dm755 target/release/traur /usr/bin/traur
+sudo install -Dm755 contrib/makepkg-traur /usr/share/traur/makepkg
+```
+
+Then, optionally, turn on the makepkg wrapper (see below):
+
+```bash
+sudo traur wrapper --enable
 ```
 
 ## Usage
@@ -91,6 +105,7 @@ dir).
 ## Detection coverage
 
 Patterns derived from real AUR malware incidents:
+- **Atomic Arch supply-chain campaign (2026)** — build-time package-manager installs (`npm`/`pip`/`cargo`/…), escalated when the package was recently adopted (`B-ORPHAN-NET-INSTALL`), plus a check against Arch's known-compromised package list (`B-KNOWN-MALICIOUS`)
 - **CHAOS RAT (2025)** — browser impersonation packages, RAT distribution
 - **Google Chrome RAT (2025)** — `.install` script, Python download+execute
 - **Acroread (2018)** — orphan takeover, curl from paste service, systemd persistence
