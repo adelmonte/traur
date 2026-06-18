@@ -8,15 +8,16 @@ pub struct InstallScriptAnalysis;
 
 impl Feature for InstallScriptAnalysis {
     fn analyze(&self, ctx: &PackageContext) -> Vec<Signal> {
-        let Some(ref content) = ctx.install_script_content else {
+        let Some(ref raw) = ctx.install_script_content else {
             return Vec::new();
         };
+        let content = crate::shared::text::strip_comment_lines(raw);
 
         let compiled = patterns::compiled_patterns();
         let mut signals = Vec::new();
 
         for pat in compiled {
-            if pat.regex.is_match(content) {
+            if pat.regex.is_match(&content) {
                 let matched_line = content
                     .lines()
                     .find(|line| pat.regex.is_match(line))

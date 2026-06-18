@@ -3,15 +3,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Deserialize, Serialize, Default)]
 pub struct Config {
     #[serde(default)]
-    pub whitelist: WhitelistConfig,
-    #[serde(default)]
     pub ignored: IgnoredConfig,
-}
-
-#[derive(Debug, Deserialize, Serialize, Default)]
-pub struct WhitelistConfig {
-    #[serde(default)]
-    pub packages: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Default)]
@@ -42,22 +34,6 @@ pub fn save_config(config: &Config) -> Result<(), String> {
         toml::to_string_pretty(config).map_err(|e| format!("Failed to serialize config: {e}"))?;
     std::fs::write(&path, toml_str).map_err(|e| format!("Failed to write config: {e}"))?;
     Ok(())
-}
-
-/// Add a package to the whitelist and persist to disk.
-pub fn add_to_whitelist(package: &str) -> Result<(), String> {
-    let mut config = load_config();
-    if !config.whitelist.packages.contains(&package.to_string()) {
-        config.whitelist.packages.push(package.to_string());
-        config.whitelist.packages.sort();
-    }
-    save_config(&config)
-}
-
-/// Check if a package is whitelisted in the given config.
-#[allow(dead_code)] // Used by traur-hook binary
-pub fn is_whitelisted_in(config: &Config, package: &str) -> bool {
-    config.whitelist.packages.iter().any(|p| p == package)
 }
 
 /// Add a signal ID to the ignored list and persist to disk.

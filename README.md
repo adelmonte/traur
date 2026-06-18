@@ -20,8 +20,7 @@ paru -S traur
 traur scan <package>                 # fetch a package's PKGBUILD over HTTP and scan it
 traur scan                           # scan all installed AUR packages
 traur scan --pkgbuild ./PKGBUILD     # scan a local PKGBUILD (offline)
-traur scan -v <package>              # verbose: show the line that triggered each finding
-traur allow <package>                # whitelist a package
+traur scan --pkgbuild ./PKGBUILD --source  # ...and print the PKGBUILD with flagged lines highlighted
 traur ignore <SIGNAL-ID>             # suppress a specific finding
 traur signals                        # list every finding traur can emit
 ```

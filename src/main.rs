@@ -47,11 +47,6 @@ enum Commands {
         #[arg(long)]
         source: bool,
     },
-    /// Whitelist a package (skip future scans)
-    Allow {
-        /// Package name to whitelist
-        package: String,
-    },
     /// Enable/disable the makepkg wrapper that scans PKGBUILDs before AUR builds
     Wrapper {
         /// Symlink the wrapper into /usr/local/bin/makepkg (needs root)
@@ -106,7 +101,6 @@ fn main() {
             flagged_only,
             source,
         } => cmd_scan(package, pkgbuild, all_installed, jobs, json, verbose, flagged_only, source),
-        Commands::Allow { package } => cmd_allow(&package),
         Commands::Wrapper { enable, disable, status: _ } => cmd_wrapper(enable, disable),
         Commands::Signals { json } => cmd_signals(json),
         Commands::Ignore { signal_id, category } => cmd_ignore(signal_id.as_deref(), category.as_deref()),
@@ -347,20 +341,6 @@ fn get_installed_aur_packages() -> Result<Vec<String>, String> {
         .collect();
 
     Ok(names)
-}
-
-fn cmd_allow(package: &str) -> i32 {
-    match shared::config::add_to_whitelist(package) {
-        Ok(()) => {
-            eprintln!("Whitelisted: {package}");
-            eprintln!("  Saved to {}", shared::config::config_path().display());
-            0
-        }
-        Err(e) => {
-            eprintln!("Error: {e}");
-            1
-        }
-    }
 }
 
 /// Path of the installed wrapper script and the PATH symlink that activates it.

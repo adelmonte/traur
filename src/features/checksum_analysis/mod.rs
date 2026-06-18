@@ -150,6 +150,12 @@ static DYNAMIC_BASH_RE: LazyLock<Regex> = LazyLock::new(|| {
 /// Returns 0 for arrays with dynamic bash constructs (command substitution,
 /// array expansion) since static token counting would be unreliable.
 fn count_array_entries(content: &str, array_name: &str) -> usize {
+    // Arrays built up with `name+=(...)` (common in kernel PKGBUILDs that add
+    // sources conditionally) can't be counted statically — the base array is
+    // only part of the total. Treat as unreliable.
+    if content.contains(&format!("{array_name}+=(")) {
+        return 0;
+    }
     let pattern = format!(r"(?ms)^{array_name}=\((.*?)\)");
     let re = Regex::new(&pattern).unwrap();
     let Some(caps) = re.captures(content) else {
@@ -249,6 +255,17 @@ mod tests {
     fn checksum_arch_specific_no_mismatch() {
         let ids = analyze("test-pkg", "source=('a.tar.gz' 'b.patch')\nsource_x86_64=('c.tar.gz')\nsha256sums=('hash1' 'hash2')\nsha256sums_x86_64=('hash3')\n");
         assert!(!has(&ids, "P-CHECKSUM-MISMATCH"), "Arch-specific arrays should not cause mismatch, got: {ids:?}");
+    }
+
+    #[test]
+    fn appended_source_array_no_mismatch() {
+        // Kernel-style PKGBUILD: base source=() plus conditional source+=() appends.
+        // Static count of the base array is meaningless, so no mismatch should fire.
+        let ids = analyze(
+            "test-pkg",
+            "source=('a.tar.gz' 'config')\nsource+=('extra.patch')\nb2sums=('h1' 'h2' 'h3')\n",
+        );
+        assert!(!has(&ids, "P-CHECKSUM-MISMATCH"), "appended source array should not flag, got: {ids:?}");
     }
 
     #[test]
