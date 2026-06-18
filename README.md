@@ -59,9 +59,19 @@ traur wrapper                    # show status
 sudo traur wrapper --disable     # remove it
 ```
 
-The wrapper scans the local PKGBUILD/`.install` **offline** (it reads the files
-the helper already downloaded), prints the findings, then asks before building.
-Because it never touches the network during a build, it cannot stall an install.
+The wrapper scans the package right before the build, prints the findings, then
+asks before building. There are two scan modes (set per user, no sudo — they
+live in your own `~/.config/traur/config.toml`):
+
+```bash
+traur wrapper --mode online    # default: local files + network signals (votes, stars, comments, bad-list)
+traur wrapper --mode offline   # local files only — never touches the network
+```
+
+Either way the scan is bounded by a timeout, so a build can never hang. `online`
+adds the findings that need the AUR/GitHub APIs; `offline` skips them for a
+fully local, instant scan. Override for a single run with
+`TRAUR_WRAPPER_MODE=offline yay -S <pkg>`.
 
 At the prompt:
 
@@ -97,10 +107,11 @@ Independent features each emit the findings they detect:
 | AUR comments analysis | Security warnings in recent comments (online) |
 | Known-malicious list | Package appears on Arch's compromised-package list (online) |
 
-Features marked *(online)* only run when scanning a package by name; the
-offline wrapper / `--pkgbuild` path runs the file-based and local-git checks
-only. *(local git)* features run when a `.git` is present (the helper's build
-dir).
+Features marked *(online)* run when scanning a package by name, and in the
+wrapper's `online` mode (the default). The `offline` mode (and a plain
+`traur scan --pkgbuild` without `--online`) runs only the file-based and
+local-git checks. *(local git)* features run when a `.git` is present (the
+helper's build dir).
 
 ## Detection coverage
 

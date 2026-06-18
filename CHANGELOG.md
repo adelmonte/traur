@@ -32,6 +32,12 @@ decide — no score, no tiers, no automatic blocking.
   the PKGBUILD/`.install` with the flagged lines highlighted.
 - `traur scan --pkgbuild <path> --source` prints the PKGBUILD/`.install` with
   the flagged lines highlighted.
+- Configurable wrapper scan mode — `online` (default; local files + network
+  signals, bounded by a timeout) or `offline` (local files only). Set with
+  `traur wrapper --mode online|offline` (stored in your user config, no sudo)
+  or per-run via `TRAUR_WRAPPER_MODE`. Backed by a new
+  `traur scan --pkgbuild <path> --online` flag that merges network signals into
+  a local scan.
 - Known-malicious-list check (`B-KNOWN-MALICIOUS`): online only, short timeout,
   cached, fails open.
 - `.install` scripts are now run through the shell and GTFOBins analyses

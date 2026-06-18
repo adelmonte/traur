@@ -46,6 +46,10 @@ enum Commands {
         /// With --pkgbuild: print the PKGBUILD/.install with flagged lines highlighted
         #[arg(long)]
         source: bool,
+
+        /// With --pkgbuild: also fetch network signals (votes, stars, comments, bad-list)
+        #[arg(long)]
+        online: bool,
     },
     /// Enable/disable the makepkg wrapper that scans PKGBUILDs before AUR builds
     Wrapper {
@@ -60,6 +64,14 @@ enum Commands {
         /// Show whether the wrapper is enabled (default)
         #[arg(long)]
         status: bool,
+
+        /// Set the wrapper scan mode: online or offline
+        #[arg(long)]
+        mode: Option<String>,
+
+        /// Print the configured wrapper mode (used by the wrapper script)
+        #[arg(long)]
+        print_mode: bool,
     },
     /// List all available signals
     Signals {
@@ -100,8 +112,11 @@ fn main() {
             verbose,
             flagged_only,
             source,
-        } => cmd_scan(package, pkgbuild, all_installed, jobs, json, verbose, flagged_only, source),
-        Commands::Wrapper { enable, disable, status: _ } => cmd_wrapper(enable, disable),
+            online,
+        } => cmd_scan(package, pkgbuild, all_installed, jobs, json, verbose, flagged_only, source, online),
+        Commands::Wrapper { enable, disable, status: _, mode, print_mode } => {
+            cmd_wrapper(enable, disable, mode.as_deref(), print_mode)
+        }
         Commands::Signals { json } => cmd_signals(json),
         Commands::Ignore { signal_id, category } => cmd_ignore(signal_id.as_deref(), category.as_deref()),
         Commands::Unignore { signal_id, category } => cmd_unignore(signal_id.as_deref(), category.as_deref()),
@@ -119,6 +134,7 @@ fn cmd_scan(
     verbose: bool,
     flagged_only: bool,
     source: bool,
+    online: bool,
 ) -> i32 {
     if let Some(path) = pkgbuild {
         // Canonicalize so a relative "./PKGBUILD" still yields the package-dir
@@ -129,7 +145,7 @@ fn cmd_scan(
             .and_then(|p| p.file_name())
             .and_then(|n| n.to_str())
             .unwrap_or("local");
-        match coordinator::scan_local(name, &path_buf) {
+        match coordinator::scan_local(name, &path_buf, online) {
             Ok(result) => {
                 if json {
                     shared::output::print_json(&result);
@@ -347,9 +363,35 @@ fn get_installed_aur_packages() -> Result<Vec<String>, String> {
 const WRAPPER_SRC: &str = "/usr/share/traur/makepkg";
 const WRAPPER_LINK: &str = "/usr/local/bin/makepkg";
 
-fn cmd_wrapper(enable: bool, disable: bool) -> i32 {
+fn cmd_wrapper(enable: bool, disable: bool, mode: Option<&str>, print_mode: bool) -> i32 {
     use std::io::ErrorKind;
     use std::path::Path;
+
+    // Read by the wrapper script itself; print just the bare mode token.
+    if print_mode {
+        println!("{}", shared::config::wrapper_mode());
+        return 0;
+    }
+
+    // Persist a new mode to the user's config.
+    if let Some(m) = mode {
+        if !shared::config::WRAPPER_MODES.contains(&m) {
+            eprintln!("Unknown mode: {m}");
+            eprintln!("Valid modes: {}", shared::config::WRAPPER_MODES.join(", "));
+            return 1;
+        }
+        return match shared::config::set_wrapper_mode(m) {
+            Ok(()) => {
+                eprintln!("Wrapper scan mode: {m}");
+                eprintln!("  Saved to {}", shared::config::config_path().display());
+                0
+            }
+            Err(e) => {
+                eprintln!("Error: {e}");
+                1
+            }
+        };
+    }
 
     let src = Path::new(WRAPPER_SRC);
     let link = Path::new(WRAPPER_LINK);
@@ -431,6 +473,7 @@ fn cmd_wrapper(enable: bool, disable: bool) -> i32 {
             Ok(_) => println!("disabled (a non-traur makepkg exists at {WRAPPER_LINK})"),
             Err(_) => println!("disabled"),
         }
+        println!("mode: {}  (change with 'traur wrapper --mode online|offline')", shared::config::wrapper_mode());
         0
     }
 }
