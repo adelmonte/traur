@@ -149,11 +149,13 @@ fn cmd_scan(
             Ok(result) => {
                 if json {
                     shared::output::print_json(&result);
+                } else if source {
+                    // Only the highlighted source — the findings list is shown
+                    // separately (e.g. already on screen when invoked via the
+                    // wrapper's `p` key), so don't repeat it.
+                    print_flagged_source(&path_buf, &result);
                 } else {
                     shared::output::print_text(&result, verbose);
-                    if source {
-                        print_flagged_source(&path_buf, &result);
-                    }
                 }
                 return 0;
             }
