@@ -94,10 +94,16 @@ pub fn scan_pkgbuild(name: &str, pkgbuild_content: &str) -> ScanResult {
     run_analysis(&ctx)
 }
 
-/// Scan a local PKGBUILD file offline. When its directory is a git repo (an AUR
-/// helper's build dir), the diff/git-history features run against that local
-/// history. No network access.
-pub fn scan_local(name: &str, pkgbuild_path: &std::path::Path) -> Result<ScanResult, String> {
+/// Scan a local PKGBUILD file. The PKGBUILD/.install and (when the directory is
+/// a git repo) the local history are always read offline. When `online` is set,
+/// the package's network signals (votes, GitHub stars, comments, known-malicious
+/// list) are also fetched for `name` and merged in — callers should bound this
+/// with a timeout. Online fetch failures fail open (the offline scan still runs).
+pub fn scan_local(
+    name: &str,
+    pkgbuild_path: &std::path::Path,
+    online: bool,
+) -> Result<ScanResult, String> {
     use crate::shared::aur_git;
 
     let content = std::fs::read_to_string(pkgbuild_path)
@@ -121,7 +127,7 @@ pub fn scan_local(name: &str, pkgbuild_path: &std::path::Path) -> Result<ScanRes
         (Vec::new(), None)
     };
 
-    let ctx = PackageContext {
+    let mut ctx = PackageContext {
         name: name.to_string(),
         metadata: None,
         pkgbuild_content: Some(content),
@@ -133,7 +139,50 @@ pub fn scan_local(name: &str, pkgbuild_path: &std::path::Path) -> Result<ScanRes
         github_not_found: false,
         aur_comments: vec![],
     };
-    Ok(run_analysis(&ctx))
+
+    if online {
+        enrich_online(&mut ctx);
+    }
+
+    let mut result = run_analysis(&ctx);
+
+    if online {
+        if let Some(sig) = crate::shared::malicious_list::check(name) {
+            result.signals.insert(0, sig);
+        }
+    }
+
+    Ok(result)
+}
+
+/// Fetch network signals for a locally-scanned package and merge them into the
+/// context. Fails open: any fetch error leaves the offline context untouched.
+fn enrich_online(ctx: &mut PackageContext) {
+    use crate::shared::{aur_comments, aur_rpc, github};
+
+    let Ok(metadata) = aur_rpc::fetch_package_info(&ctx.name) else {
+        return;
+    };
+
+    ctx.maintainer_packages = metadata
+        .maintainer
+        .as_deref()
+        .and_then(|m| aur_rpc::fetch_maintainer_packages(m).ok())
+        .unwrap_or_default();
+
+    let (stars, not_found) = metadata
+        .url
+        .as_deref()
+        .and_then(|url| github::fetch_github_stars(url))
+        .map(|info| (if info.found { Some(info.stars) } else { None }, !info.found))
+        .unwrap_or((None, false));
+    ctx.github_stars = stars;
+    ctx.github_not_found = not_found;
+
+    let package_base = metadata.package_base.as_deref().unwrap_or(&ctx.name);
+    ctx.aur_comments = aur_comments::fetch_recent_comments(package_base);
+
+    ctx.metadata = Some(metadata);
 }
 
 

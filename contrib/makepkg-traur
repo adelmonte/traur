@@ -24,8 +24,17 @@ for arg in "$@"; do
 done
 
 if [[ $do_scan -eq 1 && -f PKGBUILD ]] && command -v traur >/dev/null 2>&1; then
-    # Offline local scan. Findings go to stderr; stdout stays clean.
-    timeout 15 traur scan --pkgbuild ./PKGBUILD >&2
+    # Scan mode: env override, else the user's config (traur reads it), else online.
+    # 'online' also fetches network signals (votes, stars, comments, bad-list);
+    # 'offline' is local files only. Either way a timeout bounds it — a build can
+    # never hang. The config is the user's own ~/.config/traur/config.toml; the
+    # wrapper is never edited to configure it.
+    mode="${TRAUR_WRAPPER_MODE:-$(traur wrapper --print-mode 2>/dev/null)}"
+    online_flag=""
+    [[ "$mode" != "offline" ]] && online_flag="--online"
+
+    # Findings go to stderr; stdout stays clean.
+    timeout 20 traur scan --pkgbuild ./PKGBUILD $online_flag >&2
 
     # Prompt only with a controlling terminal; otherwise auto-proceed so
     # unattended (--noconfirm) updates never stall.

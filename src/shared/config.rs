@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 pub struct Config {
     #[serde(default)]
     pub ignored: IgnoredConfig,
+    #[serde(default)]
+    pub wrapper: WrapperConfig,
 }
 
 #[derive(Debug, Deserialize, Serialize, Default)]
@@ -12,6 +14,39 @@ pub struct IgnoredConfig {
     pub signals: Vec<String>,
     #[serde(default)]
     pub categories: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct WrapperConfig {
+    /// makepkg-wrapper scan mode: "online" (local files + network signals,
+    /// bounded by a timeout) or "offline" (local files only).
+    #[serde(default = "default_wrapper_mode")]
+    pub mode: String,
+}
+
+impl Default for WrapperConfig {
+    fn default() -> Self {
+        Self { mode: default_wrapper_mode() }
+    }
+}
+
+fn default_wrapper_mode() -> String {
+    "online".to_string()
+}
+
+/// Valid wrapper modes.
+pub const WRAPPER_MODES: [&str; 2] = ["online", "offline"];
+
+/// Read the configured wrapper mode (defaults to "online").
+pub fn wrapper_mode() -> String {
+    load_config().wrapper.mode
+}
+
+/// Set and persist the wrapper mode.
+pub fn set_wrapper_mode(mode: &str) -> Result<(), String> {
+    let mut config = load_config();
+    config.wrapper.mode = mode.to_string();
+    save_config(&config)
 }
 
 /// Load config from ~/.config/traur/config.toml, falling back to defaults.
