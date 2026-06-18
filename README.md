@@ -1,5 +1,12 @@
 # traur
 
+> A fork of [**Sohimaster/traur**](https://github.com/Sohimaster/traur),
+> reworked into a plain findings reporter. The upstream project assigns a 0–100
+> **trust score** with tiers and an ALPM hook that can block installs; this fork
+> removes all of that in favor of listing the raw findings and letting you
+> decide — plus an offline `makepkg` wrapper. If you want the trust-scoring
+> tool, use upstream.
+
 A findings-based security scanner for AUR PKGBUILDs, written in Rust. It
 analyzes PKGBUILDs, `.install` scripts, source URLs, metadata, and git history
 and reports the security-relevant **findings** it detects — no opaque trust
