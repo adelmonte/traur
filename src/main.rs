@@ -1,4 +1,3 @@
-mod bench;
 mod coordinator;
 mod features;
 mod shared;
@@ -7,7 +6,7 @@ use clap::{Parser, Subcommand};
 use std::process;
 
 #[derive(Parser)]
-#[command(name = "traur", about = "Trust scoring for AUR packages")]
+#[command(name = "traur", about = "Findings-based security scanner for AUR PKGBUILDs")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -40,24 +39,27 @@ enum Commands {
         #[arg(short = 'v', long)]
         verbose: bool,
 
-        /// Only show flagged packages (SKETCHY and above)
+        /// Only show packages that have findings
         #[arg(short = 'f', long)]
         flagged_only: bool,
-    },
-    /// Whitelist a package (skip future scans)
-    Allow {
-        /// Package name to whitelist
-        package: String,
-    },
-    /// Benchmark scanning the N most recently modified AUR packages
-    Bench {
-        /// Number of packages to scan
-        #[arg(long, default_value_t = 1000)]
-        count: usize,
 
-        /// Number of concurrent scan threads
-        #[arg(long, default_value_t = 8)]
-        jobs: usize,
+        /// With --pkgbuild: print the PKGBUILD/.install with flagged lines highlighted
+        #[arg(long)]
+        source: bool,
+    },
+    /// Enable/disable the makepkg wrapper that scans PKGBUILDs before AUR builds
+    Wrapper {
+        /// Symlink the wrapper into /usr/local/bin/makepkg (needs root)
+        #[arg(long)]
+        enable: bool,
+
+        /// Remove the wrapper symlink (needs root)
+        #[arg(long)]
+        disable: bool,
+
+        /// Show whether the wrapper is enabled (default)
+        #[arg(long)]
+        status: bool,
     },
     /// List all available signals
     Signals {
@@ -65,7 +67,7 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
-    /// Ignore a signal or category (exclude from scoring and output)
+    /// Ignore a signal or category (exclude from output)
     Ignore {
         /// Signal ID to ignore (e.g. P-PYTHON-INLINE)
         signal_id: Option<String>,
@@ -97,9 +99,9 @@ fn main() {
             json,
             verbose,
             flagged_only,
-        } => cmd_scan(package, pkgbuild, all_installed, jobs, json, verbose, flagged_only),
-        Commands::Allow { package } => cmd_allow(&package),
-        Commands::Bench { count, jobs } => bench::run(count, jobs),
+            source,
+        } => cmd_scan(package, pkgbuild, all_installed, jobs, json, verbose, flagged_only, source),
+        Commands::Wrapper { enable, disable, status: _ } => cmd_wrapper(enable, disable),
         Commands::Signals { json } => cmd_signals(json),
         Commands::Ignore { signal_id, category } => cmd_ignore(signal_id.as_deref(), category.as_deref()),
         Commands::Unignore { signal_id, category } => cmd_unignore(signal_id.as_deref(), category.as_deref()),
@@ -116,27 +118,34 @@ fn cmd_scan(
     json: bool,
     verbose: bool,
     flagged_only: bool,
+    source: bool,
 ) -> i32 {
     if let Some(path) = pkgbuild {
-        let content = match std::fs::read_to_string(&path) {
-            Ok(c) => c,
-            Err(e) => {
-                eprintln!("Error reading {path}: {e}");
-                return 1;
-            }
-        };
-        let name = std::path::Path::new(&path)
+        // Canonicalize so a relative "./PKGBUILD" still yields the package-dir
+        // name (its parent is "." otherwise).
+        let path_buf = std::fs::canonicalize(&path).unwrap_or_else(|_| std::path::PathBuf::from(&path));
+        let name = path_buf
             .parent()
             .and_then(|p| p.file_name())
             .and_then(|n| n.to_str())
             .unwrap_or("local");
-        let result = coordinator::scan_pkgbuild(name, &content);
-        if json {
-            shared::output::print_json(&result);
-        } else {
-            shared::output::print_text(&result, verbose);
+        match coordinator::scan_local(name, &path_buf) {
+            Ok(result) => {
+                if json {
+                    shared::output::print_json(&result);
+                } else {
+                    shared::output::print_text(&result, verbose);
+                    if source {
+                        print_flagged_source(&path_buf, &result);
+                    }
+                }
+                return 0;
+            }
+            Err(e) => {
+                eprintln!("Error: {e}");
+                return 1;
+            }
         }
-        return if result.tier >= shared::scoring::Tier::Suspicious { 1 } else { 0 };
     }
 
     if let Some(pkg) = package {
@@ -147,15 +156,22 @@ fn cmd_scan(
     cmd_scan_all_installed(jobs, json, verbose, flagged_only)
 }
 
+/// Print the PKGBUILD and .install with traur-flagged lines highlighted.
+fn print_flagged_source(pkgbuild_path: &std::path::Path, result: &shared::scoring::ScanResult) {
+    let flagged = shared::output::flagged_lines(result);
+    let mut w = std::io::stderr();
+    if let Ok(content) = std::fs::read_to_string(pkgbuild_path) {
+        shared::output::write_source(&mut w, "PKGBUILD", &content, &flagged);
+        let dir = pkgbuild_path.parent().unwrap_or(std::path::Path::new("."));
+        if let Some(install) = shared::aur_git::read_install_script(dir, &content) {
+            shared::output::write_source(&mut w, ".install", &install, &flagged);
+        }
+    }
+}
+
 fn cmd_scan_single(pkg: &str, json: bool, verbose: bool) -> i32 {
     match coordinator::scan_package(pkg, json, verbose) {
-        Ok(tier) => {
-            use shared::scoring::Tier;
-            match tier {
-                Tier::Trusted | Tier::Ok | Tier::Sketchy => 0,
-                Tier::Suspicious | Tier::Malicious => 1,
-            }
-        }
+        Ok(()) => 0,
         Err(e) => {
             eprintln!("Error scanning {pkg}: {e}");
             1
@@ -164,8 +180,8 @@ fn cmd_scan_single(pkg: &str, json: bool, verbose: bool) -> i32 {
 }
 
 fn cmd_scan_all_installed(jobs: usize, json: bool, verbose: bool, flagged_only: bool) -> i32 {
-    use crate::shared::bulk::{batch_fetch_metadata, clone_with_retry, prefetch_maintainer_packages};
-    use crate::shared::scoring::{ScanResult, Tier};
+    use crate::shared::bulk::{batch_fetch_metadata, fetch_with_retry, prefetch_maintainer_packages};
+    use crate::shared::scoring::ScanResult;
     use colored::Colorize;
     use indicatif::{ProgressBar, ProgressStyle};
     use rayon::prelude::*;
@@ -217,9 +233,8 @@ fn cmd_scan_all_installed(jobs: usize, json: bool, verbose: bool, flagged_only: 
             .progress_chars("##-"),
     );
 
-    let tier_counts: [AtomicU64; 5] = std::array::from_fn(|_| AtomicU64::new(0));
     let error_count = AtomicU64::new(0);
-    let flagged = std::sync::Mutex::new(Vec::<ScanResult>::new());
+    let results = std::sync::Mutex::new(Vec::<ScanResult>::new());
 
     pool.install(|| {
         names.par_iter().for_each(|name| {
@@ -231,8 +246,14 @@ fn cmd_scan_all_installed(jobs: usize, json: bool, verbose: bool, flagged_only: 
                     .cloned()
                     .unwrap_or_default();
 
-                match clone_with_retry(name, meta, maint_pkgs) {
-                    Ok(ctx) => Ok(coordinator::run_analysis_with_config(&ctx, &config)),
+                match fetch_with_retry(name, meta, maint_pkgs) {
+                    Ok(ctx) => {
+                        let mut scan = coordinator::run_analysis_with_config(&ctx, &config);
+                        if let Some(sig) = shared::malicious_list::check(name) {
+                            scan.signals.insert(0, sig);
+                        }
+                        Ok(scan)
+                    }
                     Err(e) => Err(e),
                 }
             } else {
@@ -241,17 +262,8 @@ fn cmd_scan_all_installed(jobs: usize, json: bool, verbose: bool, flagged_only: 
 
             match result {
                 Ok(scan) => {
-                    let idx = match scan.tier {
-                        Tier::Trusted => 0,
-                        Tier::Ok => 1,
-                        Tier::Sketchy => 2,
-                        Tier::Suspicious => 3,
-                        Tier::Malicious => 4,
-                    };
-                    tier_counts[idx].fetch_add(1, Ordering::Relaxed);
-
-                    if !flagged_only || scan.tier >= Tier::Sketchy {
-                        flagged.lock().unwrap().push(scan);
+                    if !flagged_only || !scan.signals.is_empty() {
+                        results.lock().unwrap().push(scan);
                     }
                 }
                 Err(e) => {
@@ -266,52 +278,39 @@ fn cmd_scan_all_installed(jobs: usize, json: bool, verbose: bool, flagged_only: 
 
     pb.finish_and_clear();
 
-    let mut flagged = flagged.into_inner().unwrap();
+    let mut results = results.into_inner().unwrap();
     let errors = error_count.load(Ordering::Relaxed) as usize;
     let scanned = total - errors;
 
+    // Show packages with the most findings first.
+    results.sort_by(|a, b| b.signals.len().cmp(&a.signals.len()));
+
     if json {
-        flagged.sort_by(|a, b| a.score.cmp(&b.score));
-        let json_str = serde_json::to_string_pretty(&flagged).expect("Failed to serialize");
+        let json_str = serde_json::to_string_pretty(&results).expect("Failed to serialize");
         println!("{json_str}");
     } else {
         println!();
         println!("{}", "=== traur scan results ===".bold());
         println!("  Scanned: {} packages ({} errors)", scanned, errors);
-        println!(
-            "  TRUSTED: {}  OK: {}  SKETCHY: {}  SUSPICIOUS: {}  MALICIOUS: {}",
-            tier_counts[0].load(Ordering::Relaxed),
-            tier_counts[1].load(Ordering::Relaxed),
-            tier_counts[2].load(Ordering::Relaxed),
-            tier_counts[3].load(Ordering::Relaxed),
-            tier_counts[4].load(Ordering::Relaxed),
-        );
 
-        if !flagged.is_empty() {
-            flagged.sort_by(|a, b| a.score.cmp(&b.score));
+        let with_findings = results.iter().filter(|r| !r.signals.is_empty()).count();
+        if with_findings > 0 {
             println!();
             println!(
                 "{}",
-                format!(
-                    "=== {} {} ===",
-                    flagged.len(),
-                    if flagged_only { "flagged packages (SKETCHY+)" } else { "packages" }
-                )
-                .bold()
+                format!("=== {with_findings} packages with findings ===").bold()
             );
-            for result in &flagged {
+            for result in results.iter().filter(|r| !r.signals.is_empty()) {
                 println!();
                 shared::output::print_text(result, verbose);
             }
         } else {
             println!();
-            println!("{}", "All packages look clean.".green());
+            println!("{}", "No findings in any installed AUR package.".green());
         }
     }
 
-    let has_critical = tier_counts[3].load(Ordering::Relaxed) > 0
-        || tier_counts[4].load(Ordering::Relaxed) > 0;
-    if has_critical { 1 } else { 0 }
+    0
 }
 
 /// Get list of installed AUR (foreign) package names via `pacman -Qm`.
@@ -344,17 +343,95 @@ fn get_installed_aur_packages() -> Result<Vec<String>, String> {
     Ok(names)
 }
 
-fn cmd_allow(package: &str) -> i32 {
-    match shared::config::add_to_whitelist(package) {
-        Ok(()) => {
-            eprintln!("Whitelisted: {package}");
-            eprintln!("  Saved to {}", shared::config::config_path().display());
-            0
+/// Path of the installed wrapper script and the PATH symlink that activates it.
+const WRAPPER_SRC: &str = "/usr/share/traur/makepkg";
+const WRAPPER_LINK: &str = "/usr/local/bin/makepkg";
+
+fn cmd_wrapper(enable: bool, disable: bool) -> i32 {
+    use std::io::ErrorKind;
+    use std::path::Path;
+
+    let src = Path::new(WRAPPER_SRC);
+    let link = Path::new(WRAPPER_LINK);
+
+    let perm_hint = |action: &str| {
+        eprintln!("Permission denied. Re-run with sudo:");
+        eprintln!("  sudo traur wrapper {action}");
+    };
+
+    if enable {
+        if !src.exists() {
+            eprintln!("Wrapper script not found at {WRAPPER_SRC} (is traur installed?)");
+            return 1;
         }
-        Err(e) => {
-            eprintln!("Error: {e}");
-            1
+        if let Ok(meta) = std::fs::symlink_metadata(link) {
+            if meta.file_type().is_symlink() && std::fs::read_link(link).ok().as_deref() == Some(src) {
+                eprintln!("Already enabled: {WRAPPER_LINK} -> {WRAPPER_SRC}");
+                return 0;
+            }
+            eprintln!("{WRAPPER_LINK} already exists and is not the traur wrapper.");
+            eprintln!("Refusing to overwrite it. Remove it yourself if you want to enable.");
+            return 1;
         }
+        if let Some(parent) = link.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        match std::os::unix::fs::symlink(src, link) {
+            Ok(()) => {
+                eprintln!("Enabled: {WRAPPER_LINK} -> {WRAPPER_SRC}");
+                eprintln!("AUR builds (via yay/paru) will now be scanned by traur first.");
+                0
+            }
+            Err(e) if e.kind() == ErrorKind::PermissionDenied => {
+                perm_hint("--enable");
+                1
+            }
+            Err(e) => {
+                eprintln!("Failed to create symlink: {e}");
+                1
+            }
+        }
+    } else if disable {
+        match std::fs::symlink_metadata(link) {
+            Ok(meta)
+                if meta.file_type().is_symlink()
+                    && std::fs::read_link(link).ok().as_deref() == Some(src) =>
+            {
+                match std::fs::remove_file(link) {
+                    Ok(()) => {
+                        eprintln!("Disabled: removed {WRAPPER_LINK}");
+                        0
+                    }
+                    Err(e) if e.kind() == ErrorKind::PermissionDenied => {
+                        perm_hint("--disable");
+                        1
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to remove symlink: {e}");
+                        1
+                    }
+                }
+            }
+            _ => {
+                eprintln!("Not enabled (no traur wrapper symlink at {WRAPPER_LINK}).");
+                0
+            }
+        }
+    } else {
+        // status (default)
+        match std::fs::symlink_metadata(link) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                let target = std::fs::read_link(link).unwrap_or_default();
+                if target == src {
+                    println!("enabled  ({WRAPPER_LINK} -> {WRAPPER_SRC})");
+                } else {
+                    println!("disabled (foreign symlink at {WRAPPER_LINK} -> {})", target.display());
+                }
+            }
+            Ok(_) => println!("disabled (a non-traur makepkg exists at {WRAPPER_LINK})"),
+            Err(_) => println!("disabled"),
+        }
+        0
     }
 }
 
@@ -395,10 +472,10 @@ fn cmd_signals(json: bool) -> i32 {
     }
 
     let categories = [
-        (SignalCategory::Metadata, "Metadata (weight 0.15)"),
-        (SignalCategory::Pkgbuild, "Pkgbuild (weight 0.45)"),
-        (SignalCategory::Behavioral, "Behavioral (weight 0.25)"),
-        (SignalCategory::Temporal, "Temporal (weight 0.15)"),
+        (SignalCategory::Metadata, "Metadata"),
+        (SignalCategory::Pkgbuild, "Pkgbuild"),
+        (SignalCategory::Behavioral, "Behavioral"),
+        (SignalCategory::Temporal, "Temporal"),
     ];
 
     let mut total = 0;

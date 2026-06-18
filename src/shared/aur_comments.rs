@@ -2,7 +2,10 @@ use regex::Regex;
 use std::sync::LazyLock;
 
 static COMMENT_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"<div class="article-content"[^>]*>([\s\S]*?)</div>"#).unwrap()
+    // Match the content div regardless of attribute order: the AUR markup emits
+    // `<div id="comment-N-content" class="article-content">` (id before class),
+    // which a `<div class=...` anchored regex misses entirely (issue #15).
+    Regex::new(r#"<div\b[^>]*\bclass="article-content"[^>]*>([\s\S]*?)</div>"#).unwrap()
 });
 
 static HTML_TAG_RE: LazyLock<Regex> = LazyLock::new(|| {
@@ -73,6 +76,15 @@ mod tests {
         assert_eq!(comments.len(), 2);
         assert!(comments[0].contains("works great"));
         assert!(comments[1].contains("Found a bug"));
+    }
+
+    #[test]
+    fn extracts_comments_with_id_before_class() {
+        // Real AUR markup puts id before class (issue #15).
+        let html = r#"<div id="comment-12345-content" class="article-content">malware warning</div>"#;
+        let comments = extract_comments(html);
+        assert_eq!(comments.len(), 1);
+        assert!(comments[0].contains("malware warning"));
     }
 
     #[test]

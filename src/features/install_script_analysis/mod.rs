@@ -8,15 +8,16 @@ pub struct InstallScriptAnalysis;
 
 impl Feature for InstallScriptAnalysis {
     fn analyze(&self, ctx: &PackageContext) -> Vec<Signal> {
-        let Some(ref content) = ctx.install_script_content else {
+        let Some(ref raw) = ctx.install_script_content else {
             return Vec::new();
         };
+        let content = crate::shared::text::strip_comment_lines(raw);
 
         let compiled = patterns::compiled_patterns();
         let mut signals = Vec::new();
 
         for pat in compiled {
-            if pat.regex.is_match(content) {
+            if pat.regex.is_match(&content) {
                 let matched_line = content
                     .lines()
                     .find(|line| pat.regex.is_match(line))
@@ -248,6 +249,26 @@ mod tests {
     fn install_tmp_exec_intervening_flags() {
         let ids = analyze("chmod -v +x /tmp/payload");
         assert!(has(&ids, "P-INSTALL-TMP-EXEC"));
+    }
+
+    // --- Build-time package-manager installs ---
+
+    #[test]
+    fn install_npm_install() {
+        let ids = analyze("npm install atomic-lockfile");
+        assert!(has(&ids, "P-INSTALL-PKG-MANAGER-JS"));
+    }
+
+    #[test]
+    fn install_pip_install() {
+        let ids = analyze("pip3 install evilpkg");
+        assert!(has(&ids, "P-INSTALL-PKG-MANAGER"));
+    }
+
+    #[test]
+    fn install_bare_npm_no_signal() {
+        let ids = analyze("npm install");
+        assert!(!has(&ids, "P-INSTALL-PKG-MANAGER-JS"), "bare npm install should not fire, got: {ids:?}");
     }
 
     #[test]

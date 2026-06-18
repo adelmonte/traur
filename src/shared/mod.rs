@@ -1,12 +1,14 @@
 pub mod aur_comments;
+pub mod aur_fetch;
 pub mod aur_git;
 pub mod aur_rpc;
 pub mod bulk;
-pub mod cache;
 pub mod config;
 pub mod github;
+pub mod malicious_list;
 pub mod models;
 pub mod output;
 pub mod patterns;
 pub mod scoring;
 pub mod signal_registry;
+pub mod text;

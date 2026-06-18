@@ -1,53 +1,119 @@
 # traur
 
-Trust scoring for AUR packages, written in Rust. Analyzes PKGBUILDs, install scripts, source URLs, metadata, and git history to score how much you should trust a package before installing it. Includes an ALPM hook that automatically scans packages before any install or upgrade transaction.
+> A fork of [**Sohimaster/traur**](https://github.com/Sohimaster/traur),
+> reworked into a plain findings reporter. The upstream project assigns a 0–100
+> **trust score** with tiers and an ALPM hook that can block installs; this fork
+> removes all of that in favor of listing the raw findings and letting you
+> decide — plus an offline `makepkg` wrapper. If you want the trust-scoring
+> tool, use upstream.
 
-<img width="859" height="640" alt="image" src="https://github.com/user-attachments/assets/768915bd-4aa2-4450-96c7-408e73e0d103" />
+A findings-based security scanner for AUR PKGBUILDs, written in Rust. It
+analyzes PKGBUILDs, `.install` scripts, source URLs, metadata, and git history
+and reports the security-relevant **findings** it detects — no opaque trust
+score, no tiers, no automatic blocking. You decide what the findings mean.
 
+It can also wrap `makepkg` so that every AUR build (via yay/paru) is scanned
+**offline** before it runs.
 
-
+![traur scanning a package during an AUR install, showing findings and the proceed prompt](demo.png)
 
 ## Installation
 
+This fork isn't on the AUR — build from source:
+
 ```bash
-paru -S traur
+git clone https://github.com/adelmonte/traur
+cd traur
+cargo build --release
+sudo install -Dm755 target/release/traur /usr/bin/traur
+sudo install -Dm755 contrib/makepkg-traur /usr/share/traur/makepkg
+```
+
+Then, optionally, turn on the makepkg wrapper (see below):
+
+```bash
+sudo traur wrapper --enable
 ```
 
 ## Usage
 
 ```bash
-traur scan                # scan all installed aur packages
-traur scan <package>      # scan a package
-traur allow <package>     # whitelist a package
+traur scan <package>                 # fetch a package's PKGBUILD over HTTP and scan it
+traur scan                           # scan all installed AUR packages
+traur scan --pkgbuild ./PKGBUILD     # scan a local PKGBUILD (offline)
+traur scan --pkgbuild ./PKGBUILD --source  # ...and print the PKGBUILD with flagged lines highlighted
+traur ignore <SIGNAL-ID>             # suppress a specific finding
+traur signals                        # list every finding traur can emit
 ```
+
+Scanning a package by name pulls just the PKGBUILD and `.install` over HTTP from
+AUR's cgit — nothing is cloned and no cache is kept on disk.
+
+## makepkg wrapper
+
+Scan PKGBUILDs automatically right before yay/paru builds them:
+
+```bash
+sudo traur wrapper --enable      # symlink the wrapper into /usr/local/bin/makepkg
+traur wrapper                    # show status
+sudo traur wrapper --disable     # remove it
+```
+
+The wrapper scans the local PKGBUILD/`.install` **offline** (it reads the files
+the helper already downloaded), prints the findings, then asks before building.
+Because it never touches the network during a build, it cannot stall an install.
+
+At the prompt:
+
+| Key | Action |
+|-----|--------|
+| `Y` / Enter | proceed with the build (default) |
+| `n` | abort the build |
+| `d` | show the git diff for this update (what changed), then ask again |
+| `p` | show the PKGBUILD/`.install` with the flagged lines highlighted, then ask again |
+
+When run non-interactively (e.g. a `--noconfirm` update) it prints the findings
+and proceeds automatically.
 
 ## How it works
 
-12 independent features emit scored signals per package:
+Independent features each emit the findings they detect:
 
 | Feature | What it checks |
 |---------|---------------|
 | PKGBUILD analysis | Dangerous shell code |
-| Install script analysis | Suspicious .install hooks |
+| Install script analysis | Suspicious `.install` hooks |
 | Source URL analysis | Untrusted source domains |
 | Checksum analysis | Missing, skipped, or weak checksums |
-| Metadata analysis | AUR votes, popularity, maintainer status |
+| Shell analysis | Beyond-regex obfuscation (var concat, indirect exec, data blobs) — also over `.install` |
+| GTFOBins analysis | Legitimate binary abuse — also over `.install` |
+| Bin source verification | `-bin` package source domain vs upstream URL mismatch |
+| Metadata analysis | AUR votes, popularity, maintainer status (online) |
 | Name analysis | Typosquatting and brand impersonation |
-| Maintainer analysis | New accounts, batch uploads |
-| Orphan takeover analysis | Submitter != maintainer, orphan takeover patterns |
-| Git history analysis | New network code, author changes |
-| Shell analysis | Beyond-regex obfuscation (var concat, indirect exec, data blobs) |
-| GTFOBins analysis | Legitimate binary abuse |
-| Bin source verification | -bin package source domain vs upstream URL mismatch |
+| Maintainer analysis | New accounts, batch uploads (online) |
+| Orphan takeover analysis | Submitter != maintainer, orphan takeover patterns (online) |
+| Git history analysis | New network code, author changes (local git) |
+| GitHub stars | Upstream repo missing or unpopular (online) |
+| AUR comments analysis | Security warnings in recent comments (online) |
+| Known-malicious list | Package appears on Arch's compromised-package list (online) |
+
+Features marked *(online)* only run when scanning a package by name; the
+offline wrapper / `--pkgbuild` path runs the file-based and local-git checks
+only. *(local git)* features run when a `.git` is present (the helper's build
+dir).
 
 ## Detection coverage
 
 Patterns derived from real AUR malware incidents:
+- **Atomic Arch supply-chain campaign (2026)** — build-time package-manager installs (`npm`/`pip`/`cargo`/…), escalated when the package was recently adopted (`B-ORPHAN-NET-INSTALL`), plus a check against Arch's known-compromised package list (`B-KNOWN-MALICIOUS`)
 - **CHAOS RAT (2025)** — browser impersonation packages, RAT distribution
-- **Google Chrome RAT (2025)** — .install script, Python download+execute
+- **Google Chrome RAT (2025)** — `.install` script, Python download+execute
 - **Acroread (2018)** — orphan takeover, curl from paste service, systemd persistence
 
-Categories: download-and-execute, reverse shells, credential theft, persistence mechanisms, privilege escalation, C2/exfiltration, cryptocurrency mining, code obfuscation, kernel module loading, environment variable theft, system reconnaissance.
+Categories: download-and-execute, reverse shells, credential theft, persistence
+mechanisms, privilege escalation, C2/exfiltration, cryptocurrency mining, code
+obfuscation, kernel module loading, environment variable theft, system
+reconnaissance.
 
 ## License
 

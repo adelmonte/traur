@@ -1,82 +1,12 @@
+//! Read helpers for a *local* AUR package repo (the working directory an AUR
+//! helper has already cloned into its build cache). traur no longer clones or
+//! caches anything itself — see `aur_fetch` for the standalone HTTP path.
+
 use crate::shared::models::GitCommit;
-use std::path::PathBuf;
-use std::process::{Command, Output, Stdio};
-use std::time::{Duration, Instant};
+use std::process::Command;
 
-const AUR_GIT_BASE: &str = "https://aur.archlinux.org";
-const GIT_TIMEOUT: Duration = Duration::from_secs(30);
-
-/// Clone or update the AUR git repo for a package. Returns the local path.
-pub fn ensure_repo(package_base: &str, cache_dir: &str) -> Result<PathBuf, String> {
-    if package_base.is_empty()
-        || !package_base
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '+' | '@'))
-        || package_base.contains("..")
-    {
-        return Err(format!("invalid package name: {package_base}"));
-    }
-
-    let repo_path = PathBuf::from(cache_dir).join(package_base);
-
-    if repo_path.join(".git").exists() {
-        // Pull latest — if it fails, use the cached version rather than erroring out
-        let _ = run_with_timeout(
-            Command::new("git")
-                .args(["pull", "--ff-only"])
-                .current_dir(&repo_path),
-        );
-    } else {
-        // Shallow clone
-        let url = format!("{AUR_GIT_BASE}/{package_base}.git");
-        let output = run_with_timeout(
-            Command::new("git")
-                .args(["clone", "--depth=50", &url, repo_path.to_str().unwrap()]),
-        )?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("git clone failed: {stderr}"));
-        }
-    }
-
-    Ok(repo_path)
-}
-
-/// Run a command with a timeout. Kills the process if it exceeds GIT_TIMEOUT.
-fn run_with_timeout(cmd: &mut Command) -> Result<Output, String> {
-    let mut child = cmd
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("failed to spawn git: {e}"))?;
-
-    let start = Instant::now();
-
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => {
-                return child
-                    .wait_with_output()
-                    .map_err(|e| format!("git failed: {e}"));
-            }
-            Ok(None) => {
-                if start.elapsed() > GIT_TIMEOUT {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err(format!(
-                        "git operation timed out after {}s",
-                        GIT_TIMEOUT.as_secs()
-                    ));
-                }
-                std::thread::sleep(Duration::from_millis(200));
-            }
-            Err(e) => return Err(format!("failed to wait for git: {e}")),
-        }
-    }
-}
-
-/// Read PKGBUILD content from a cloned repo.
+/// Read PKGBUILD content from a local repo directory.
+#[allow(dead_code)]
 pub fn read_pkgbuild(repo_path: &std::path::Path) -> Result<String, String> {
     std::fs::read_to_string(repo_path.join("PKGBUILD"))
         .map_err(|e| format!("Failed to read PKGBUILD: {e}"))
@@ -186,37 +116,3 @@ pub fn get_latest_diff(repo_path: &std::path::Path) -> Option<String> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn rejects_path_traversal() {
-        assert!(ensure_repo("../../etc/shadow", "/tmp").is_err());
-    }
-
-    #[test]
-    fn rejects_slash() {
-        assert!(ensure_repo("foo/bar", "/tmp").is_err());
-    }
-
-    #[test]
-    fn rejects_empty() {
-        assert!(ensure_repo("", "/tmp").is_err());
-    }
-
-    #[test]
-    fn accepts_valid_package_name() {
-        // Should pass validation — may succeed or fail on clone, but not on validation
-        if let Err(e) = ensure_repo("yay", "/tmp/traur-test-nonexistent") {
-            assert!(!e.contains("invalid package name"), "valid name rejected: {e}");
-        }
-    }
-
-    #[test]
-    fn accepts_complex_valid_name() {
-        if let Err(e) = ensure_repo("lib32-mesa+utils", "/tmp/traur-test-nonexistent") {
-            assert!(!e.contains("invalid package name"), "valid name rejected: {e}");
-        }
-    }
-}

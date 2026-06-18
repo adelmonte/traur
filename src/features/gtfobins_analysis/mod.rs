@@ -22,11 +22,12 @@ impl Feature for GtfobinsAnalysis {
 }
 
 fn match_patterns(content: &str, id_prefix: &str, desc_suffix: &str) -> Vec<Signal> {
+    let content = crate::shared::text::strip_comment_lines(content);
     let compiled = patterns::compiled_patterns();
     let mut signals = Vec::new();
 
     for pat in compiled {
-        if pat.regex.is_match(content) {
+        if pat.regex.is_match(&content) {
             let matched_line = content
                 .lines()
                 .find(|line| pat.regex.is_match(line))

