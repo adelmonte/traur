@@ -19,11 +19,19 @@ It can also wrap `makepkg` so that every AUR build (via yay/paru) is scanned
 
 ## Installation
 
-This fork isn't on the AUR — build from source:
+This fork isn't on the AUR. The `traur` / `traur-bin` packages there are
+**upstream**, not this fork. Build the bundled `traur-findings-git` package,
+which replaces them:
 
 ```bash
 git clone https://github.com/adelmonte/traur
-cd traur
+cd traur/pkg
+makepkg -si
+```
+
+Or without pacman:
+
+```bash
 cargo build --release
 sudo install -Dm755 target/release/traur /usr/bin/traur
 sudo install -Dm755 contrib/makepkg-traur /usr/share/traur/makepkg

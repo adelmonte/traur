@@ -1,38 +1,48 @@
-# Maintainer: Sohimaster
-pkgname=traur
-pkgver=0.5.0
+# Maintainer: adelmonte
+pkgname=traur-findings-git
+_pkgname=traur
+pkgver=0.5.0.r0.g80df96e
 pkgrel=1
-pkgdesc='Findings-based security scanner for AUR PKGBUILDs'
+pkgdesc='Findings-based security scanner for AUR PKGBUILDs (adelmonte fork of traur)'
 arch=('x86_64')
-url='https://github.com/Sohimaster/traur'
+url='https://github.com/adelmonte/traur'
 license=('MIT')
 depends=('git' 'gcc-libs' 'glibc')
 makedepends=('cargo')
-source=("$pkgname-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz")
+provides=('traur')
+conflicts=('traur' 'traur-bin')
+source=("$_pkgname::git+$url.git")
 sha256sums=('SKIP')
 
+pkgver() {
+    cd "$_pkgname"
+    local ver
+    ver=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+    printf '%s.r%s.g%s' "$ver" "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+}
+
 prepare() {
-    cd "$pkgname-$pkgver"
+    cd "$_pkgname"
     export RUSTUP_TOOLCHAIN=stable
     cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
 }
 
 build() {
-    cd "$pkgname-$pkgver"
+    cd "$_pkgname"
     export RUSTUP_TOOLCHAIN=stable
     export CARGO_TARGET_DIR=target
-    cargo build --release
+    cargo build --frozen --release
 }
 
 check() {
-    cd "$pkgname-$pkgver"
+    cd "$_pkgname"
     export RUSTUP_TOOLCHAIN=stable
     export CARGO_TARGET_DIR=target
-    cargo test --release
+    cargo test --frozen --release
 }
 
 package() {
-    cd "$pkgname-$pkgver"
+    cd "$_pkgname"
     install -Dm0755 target/release/traur "$pkgdir/usr/bin/traur"
     # makepkg wrapper, shipped inactive. Enable with `traur wrapper --enable`,
     # which symlinks it into /usr/local/bin/makepkg.
