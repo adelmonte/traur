@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+Detection fixes ported from upstream (Sohimaster/traur v0.5.0), adapted to the
+findings-only model.
+
+### Added
+- Quote-split commands (`cu""rl … | ba""sh`) are now seen through, in both the
+  PKGBUILD and `.install` (`SA-QUOTE-SPLIT-EXEC`, plus the usual pattern hits).
+- Atomic Arch patterns: known payload package names, npm installs from a
+  remote tarball URL, eBPF loader code, cloud credential store access.
+- `T-DIFF-NEW-DEP-NPM-BUN`: an update newly adds `npm`/`bun` as a dependency.
+
+### Fixed
+- Package-install patterns no longer match across lines, so a bare
+  `npm install` followed by another command is no longer flagged.
+- Checksum arrays are masked before pattern matching (hex no longer trips
+  patterns); crypto-wallet regex has word boundaries.
+- `name::url` source entries are counted once, fixing false
+  `P-CHECKSUM-MISMATCH` findings (e.g. zoom, bitwarden-git).
+
 ## 0.5.0
 
 Major rework (this fork): traur is now a **findings reporter**, not a trust

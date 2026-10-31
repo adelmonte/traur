@@ -17,13 +17,16 @@
 /// `'cu'rl` into `curl`. Single quotes, double quotes and backslashes that
 /// escape a quote inside a quoted string are handled.
 ///
-/// The returned string has the same line structure as the input: newlines are
-/// always preserved so that line-oriented callers keep their line numbers.
+/// The returned string has the same number of lines as the input, so
+/// line-oriented callers keep their line numbers. A `\`-continued command is
+/// joined onto its first line, and the newlines it swallowed are emitted after
+/// it so the following lines stay aligned.
 pub fn strip_quotes(input: &str) -> String {
     let chars: Vec<char> = input.chars().collect();
     let mut out = String::with_capacity(input.len());
     let mut i = 0;
     let mut quote: Option<char> = None;
+    let mut deferred_newlines = 0;
 
     while i < chars.len() {
         let c = chars[i];
@@ -60,13 +63,21 @@ pub fn strip_quotes(input: &str) -> String {
                     // Backslash outside quotes escapes the next character.
                     let next = chars[i + 1];
                     if next == '\n' {
-                        // Line continuation: drop both.
+                        // Line continuation: join, and emit the newline later.
+                        deferred_newlines += 1;
                         i += 2;
                         continue;
                     }
                     out.push(next);
                     i += 2;
                     continue;
+                }
+                '\n' => {
+                    out.push('\n');
+                    for _ in 0..deferred_newlines {
+                        out.push('\n');
+                    }
+                    deferred_newlines = 0;
                 }
                 _ => out.push(c),
             },
@@ -75,6 +86,9 @@ pub fn strip_quotes(input: &str) -> String {
         i += 1;
     }
 
+    for _ in 0..deferred_newlines {
+        out.push('\n');
+    }
     out
 }
 
@@ -112,7 +126,18 @@ mod tests {
 
     #[test]
     fn handles_line_continuation() {
-        assert_eq!(strip_quotes("curl \\\n  -O x"), "curl   -O x");
+        assert_eq!(strip_quotes("curl \\\n  -O x"), "curl   -O x\n");
+    }
+
+    #[test]
+    fn line_continuation_keeps_following_lines_aligned() {
+        let input = "cu\"\"rl \\\n  -s x | bash\nmake\nmake install";
+        let out = strip_quotes(input);
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), input.lines().count());
+        assert_eq!(lines[0], "curl   -s x | bash");
+        assert_eq!(lines[2], "make");
+        assert_eq!(lines[3], "make install");
     }
 
     #[test]

