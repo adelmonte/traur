@@ -1765,3 +1765,75 @@ points = 55
 description = "Tailscale file copy (VPN-based data exfiltration)"
 override_gate = false
 
+
+# --- 2026 Atomic Arch campaign (upstream issue #25) ---
+# Orphaned packages were adopted and had malicious npm/bun dependencies
+# (atomic-lockfile, js-digest) injected at build time, so the payload never
+# appeared in source=(). A credential stealer and an eBPF rootkit followed.
+# Named-package installs are already covered by P-NET-PKG-INSTALL-JS; bare
+# lockfile installs (`npm install`, `npm ci`) are deliberately not flagged.
+# eBPF patterns match loader code, not tool/library names, so packages that
+# merely depend on or ship libbpf/bpftrace are not flagged.
+
+[[pkgbuild_analysis]]
+id = "P-NPM-REMOTE-TARBALL"
+pattern = '(npm|bun|yarn|pnpm)\s+(install|i|add)\s+[^\n]*https?://'
+points = 80
+description = "npm installing a package from a remote tarball URL (payload outside source=())"
+override_gate = false
+
+[[pkgbuild_analysis]]
+id = "P-NPM-ATOMIC-ARCH-NAMES"
+pattern = '\b(atomic-lockfile|js-digest)\b'
+points = 95
+description = "Known Atomic Arch campaign payload package name (atomic-lockfile/js-digest)"
+override_gate = true
+
+[[pkgbuild_analysis]]
+id = "P-EBPF-ROOTKIT"
+pattern = '(#include\s*<bpf/libbpf\.h>|\bbpf\s*\(\s*BPF_|\bBPF_(PROG_LOAD|MAP_CREATE)\b|\bbc_attach_kprobe\b|\bbpftool\s+prog\s+load)'
+points = 85
+description = "eBPF program loading (kernel-level rootkit / process hiding)"
+override_gate = false
+
+[[pkgbuild_analysis]]
+id = "P-EBPF-BTF-WRITE"
+pattern = '(/sys/fs/bpf|\bbtf__\w+)'
+points = 60
+description = "Writing to the BPF filesystem or manipulating BTF data"
+override_gate = false
+
+[[pkgbuild_analysis]]
+id = "P-CLOUD-CRED-ACCESS"
+pattern = '(~/\.aws/credentials|~/\.aws/config|/home/[^/]+/\.aws/|~/\.docker/config\.json|~/\.npmrc|~/\.netrc|~/\.config/gh/hosts\.yml|~/\.kube/config|~/\.config/gcloud/)'
+points = 70
+description = "Access to cloud/service credential stores (.aws, .docker, .npmrc, .netrc, gh, kube, gcloud)"
+override_gate = false
+
+[[install_script_analysis]]
+id = "P-INSTALL-NPM-REMOTE-TARBALL"
+pattern = '(npm|bun|yarn|pnpm)\s+(install|i|add)\s+[^\n]*https?://'
+points = 85
+description = "Install script installs an npm package from a remote tarball URL"
+override_gate = false
+
+[[install_script_analysis]]
+id = "P-INSTALL-NPM-ATOMIC-ARCH-NAMES"
+pattern = '\b(atomic-lockfile|js-digest)\b'
+points = 95
+description = "Known Atomic Arch campaign payload package name in an install script"
+override_gate = true
+
+[[install_script_analysis]]
+id = "P-INSTALL-EBPF-ROOTKIT"
+pattern = '(#include\s*<bpf/libbpf\.h>|\bbpf\s*\(\s*BPF_|\bBPF_(PROG_LOAD|MAP_CREATE)\b|\bbc_attach_kprobe\b|\bbpftool\s+prog\s+load|\bbpftrace\s+-e\b|/sys/fs/bpf)'
+points = 90
+description = "eBPF program loading in an install script (kernel-level rootkit)"
+override_gate = false
+
+[[install_script_analysis]]
+id = "P-INSTALL-CLOUD-CRED-ACCESS"
+pattern = '(~/\.aws/credentials|~/\.aws/config|/home/[^/]+/\.aws/|~/\.docker/config\.json|~/\.npmrc|~/\.netrc|~/\.config/gh/hosts\.yml|~/\.kube/config|~/\.config/gcloud/)'
+points = 75
+description = "Access to cloud/service credential stores in an install script"
+override_gate = false

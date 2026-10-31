@@ -79,3 +79,86 @@ fn gtfobins_multi_signal_detection() {
     // source_url_analysis signal for raw IP
     assert!(ids.contains(&"P-RAW-IP-URL"), "got: {ids:?}");
 }
+
+#[test]
+fn atomic_arch_campaign_is_reported() {
+    // Upstream issue #25: orphaned package adopted, malicious npm dependencies
+    // injected at build time, credentials harvested.
+    let pkgbuild = include_str!("fixtures/malicious/atomic_arch.PKGBUILD");
+    let result = scan_pkgbuild("alvr", pkgbuild);
+    let ids = signal_ids(&result);
+
+    assert!(ids.contains(&"P-NPM-ATOMIC-ARCH-NAMES"), "got: {ids:?}");
+    assert!(ids.contains(&"P-NET-PKG-INSTALL-JS"), "got: {ids:?}");
+    assert!(ids.contains(&"P-NPM-REMOTE-TARBALL"), "got: {ids:?}");
+    assert!(ids.contains(&"P-CLOUD-CRED-ACCESS"), "got: {ids:?}");
+}
+
+#[test]
+fn ebpf_loading_is_flagged() {
+    let pkgbuild = r#"pkgname=rootkit
+pkgver=1
+pkgrel=1
+arch=('x86_64')
+url=''
+license=()
+source=("$url/x.c")
+sha256sums=('9f2c1b7e5d4a3c8b1e0f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d')
+build() {
+    gcc -o k x.c -lbpf
+    cat > loader.c <<EOC
+#include <bpf/libbpf.h>
+bpf(BPF_PROG_LOAD, &attr, sizeof(attr));
+EOC
+}
+"#;
+    let result = scan_pkgbuild("rootkit", pkgbuild);
+    let ids = signal_ids(&result);
+    assert!(ids.contains(&"P-EBPF-ROOTKIT"), "got: {ids:?}");
+}
+
+#[test]
+fn benign_npm_usage_is_not_flagged() {
+    // A bare lockfile `npm install` is normal for JS/Electron builds.
+    let pkgbuild = r#"pkgname=code
+pkgver=1
+pkgrel=1
+arch=('x86_64')
+url='https://github.com/microsoft/vscode'
+license=('MIT')
+source=("$url/archive/v$pkgver.tar.gz")
+sha256sums=('9f2c1b7e5d4a3c8b1e0f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d')
+build() {
+    cd "code-$pkgver"
+    npm install
+    npm run build
+}
+"#;
+    let result = scan_pkgbuild("code", pkgbuild);
+    let ids = signal_ids(&result);
+    assert!(
+        !ids.iter().any(|i| i.contains("NPM") || i.contains("PKG-INSTALL")),
+        "plain npm install must not be flagged, got: {ids:?}"
+    );
+}
+
+#[test]
+fn ebpf_dependency_alone_is_not_flagged() {
+    let pkgbuild = r#"pkgname=bpf-tool
+pkgver=1
+pkgrel=1
+pkgdesc='Trace kprobes and uprobes with bpftrace'
+arch=('x86_64')
+url='https://example.com'
+license=('MIT')
+depends=('libbpf' 'bpftrace')
+source=("$url/x.tar.gz")
+sha256sums=('9f2c1b7e5d4a3c8b1e0f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d')
+build() {
+    make
+}
+"#;
+    let result = scan_pkgbuild("bpf-tool", pkgbuild);
+    let ids = signal_ids(&result);
+    assert!(!ids.iter().any(|i| i.contains("EBPF")), "got: {ids:?}");
+}

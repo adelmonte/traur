@@ -124,14 +124,14 @@ helper's build dir).
 ## Detection coverage
 
 Patterns derived from real AUR malware incidents:
-- **Atomic Arch supply-chain campaign (2026)** — build-time package-manager installs (`npm`/`pip`/`cargo`/…), escalated when the package was recently adopted (`B-ORPHAN-NET-INSTALL`), plus a check against Arch's known-compromised package list (`B-KNOWN-MALICIOUS`)
+- **Atomic Arch supply-chain campaign (2026)** — build-time package-manager installs (`npm`/`pip`/`cargo`/…), escalated when the package was recently adopted (`B-ORPHAN-NET-INSTALL`), known payload package names (`atomic-lockfile`, `js-digest`), eBPF rootkit loading, cloud credential harvesting, plus a check against Arch's known-compromised package list (`B-KNOWN-MALICIOUS`)
 - **CHAOS RAT (2025)** — browser impersonation packages, RAT distribution
 - **Google Chrome RAT (2025)** — `.install` script, Python download+execute
 - **Acroread (2018)** — orphan takeover, curl from paste service, systemd persistence
 
 Categories: download-and-execute, reverse shells, credential theft, persistence
 mechanisms, privilege escalation, C2/exfiltration, cryptocurrency mining, code
-obfuscation, kernel module loading, environment variable theft, system
+obfuscation, kernel module and eBPF loading, environment variable theft, system
 reconnaissance.
 
 ## License
